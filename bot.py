@@ -177,7 +177,7 @@ async def join_giveaway(callback: types.CallbackQuery):
         await callback.answer("✅ Ти вже береш участь!", show_alert=True)
         return
 
-    participants.append({"id": user_id, "name": user.full_name})
+    participants.append({"id": user_id, "name": user.full_name or "Користувач"})
     save_participants(participants)
     await callback.answer("🎉 Тебе додано до розіграшу!", show_alert=True)
     print(f"👤 Учасник: {user.full_name} ({user_id})")
@@ -212,14 +212,21 @@ async def pick_winner(message: types.Message):
     else:
         winners = random.sample(participants, num_winners)
 
+    # 🏆 Формування клікабельного списку
     result_text = "🏆 <b>Переможці розіграшу Stake RP:</b>\n\n"
     for i, winner in enumerate(winners, start=1):
-        result_text += f"{i}. <a href='tg://user?id={winner['id']}'>{winner['name']}</a>\n"
+        name = winner.get("name", "Користувач")
+        user_id = winner.get("id")
+        clickable = f"<a href='tg://user?id={user_id}'>{name}</a>"
+        result_text += f"{i}. {clickable}\n"
     result_text += "\n🎉 Вітаємо переможців! Дякуємо всім за участь ❤️"
 
     save_winner_status({"used": True})
+
+    # Надсилаємо адміну та в канал
     await bot.send_message(chat_id=message.from_user.id, text=result_text)
-    print(f"🏆 Результати розіграшу надіслані адміну {message.from_user.full_name} ({message.from_user.id})")
+    await bot.send_message(chat_id=CHANNEL_USERNAME, text=result_text)
+    print(f"🏆 Результати розіграшу опубліковані у {CHANNEL_USERNAME} та надіслані адміну {message.from_user.id}")
 
 # --- /reset ---
 @dp.message(lambda message: message.text == "/reset")
