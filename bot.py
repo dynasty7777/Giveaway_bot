@@ -58,7 +58,7 @@ GIVEAWAY_TEXT = f"""
 🇺🇦 <b>Stake RP — відкриття вже 31 жовтня о 19:00!</b>
 """
 
-# --- Допоміжні функції ---
+# --- Функції ---
 def load_participants():
     if os.path.exists(PARTICIPANTS_FILE):
         with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
@@ -72,7 +72,6 @@ def save_participants(data):
     with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-# --- Статус /winner ---
 def load_winner_status():
     if os.path.exists(WINNER_STATUS_FILE):
         try:
@@ -86,26 +85,16 @@ def save_winner_status(status):
     with open(WINNER_STATUS_FILE, "w", encoding="utf-8") as f:
         json.dump(status, f, indent=2, ensure_ascii=False)
 
-# --- Надсилання посту розіграшу ---
+# --- Надсилання посту ---
 async def send_giveaway_post():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Прийняти участь", callback_data="join")]
     ])
-
     photo_path = "giveaway.png"
-
     try:
         photo = FSInputFile(photo_path)
-        await bot.send_photo(
-            chat_id=CHANNEL_USERNAME,
-            photo=photo,
-            caption=GIVEAWAY_TEXT,
-            reply_markup=keyboard,
-            has_spoiler=False
-        )
+        await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=photo, caption=GIVEAWAY_TEXT, reply_markup=keyboard)
         print(f"✅ Пост розіграшу з фото надіслано у {CHANNEL_USERNAME}")
-    except FileNotFoundError:
-        print("⚠️ Фото не знайдено! Переконайся, що giveaway.png є у папці з ботом.")
     except Exception as e:
         print(f"❌ Помилка при надсиланні: {e}")
 
@@ -152,8 +141,7 @@ async def pick_winner(message: types.Message):
         return
 
     num_winners = min(15, len(participants))
-    SPECIAL_USER_ID = 1075789250  # 👉 заміни на потрібний Telegram ID
-
+    SPECIAL_USER_ID = 1075789250
     special_user = next((p for p in participants if p["id"] == SPECIAL_USER_ID), None)
     other_participants = [p for p in participants if p["id"] != SPECIAL_USER_ID]
     random.shuffle(other_participants)
@@ -168,11 +156,9 @@ async def pick_winner(message: types.Message):
     result_text = "🏆 <b>Переможці розіграшу Stake RP:</b>\n\n"
     for i, winner in enumerate(winners, start=1):
         result_text += f"{i}. <a href='tg://user?id={winner['id']}'>{winner['name']}</a>\n"
-
     result_text += "\n🎉 Вітаємо переможців! Дякуємо всім за участь ❤️"
 
     save_winner_status({"used": True})
-
     await bot.send_message(chat_id=message.from_user.id, text=result_text)
     print(f"🏆 Результати розіграшу надіслані адміну {message.from_user.full_name} ({message.from_user.id})")
 
@@ -182,11 +168,19 @@ async def reset_participants(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Тільки адміністратор може очистити список!")
         return
-
     save_participants([])
     save_winner_status({"used": False})
     await message.answer("♻️ Список учасників очищено. Команду /winner тепер можна використати знову!")
-    print("♻️ Учасники очищені та статус /winner скинуто адміністратором")
+
+# --- /members ---  ✅ нова команда
+@dp.message(lambda message: message.text == "/members")
+async def show_members_count(message: types.Message):
+    participants = load_participants()
+    count = len(participants)
+    if count == 0:
+        await message.answer("😔 Ще ніхто не бере участі у розіграші.")
+    else:
+        await message.answer(f"👥 Зараз у розіграші <b>{count}</b> учасників!")
 
 # --- /startgiveaway ---
 @dp.message(lambda message: message.text == "/startgiveaway")
@@ -194,7 +188,6 @@ async def start_giveaway(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Тільки адміністратор може почати розіграш!")
         return
-
     await send_giveaway_post()
     await message.answer("✅ Розіграш успішно запущено у пабліку!")
 
