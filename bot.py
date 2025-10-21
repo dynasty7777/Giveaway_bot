@@ -11,10 +11,25 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = "@TestGiveAwayStake"
-PARTICIPANTS_FILE = "participants.json"
-WINNER_STATUS_FILE = "winner_status.json"
 
-# 🔹 Тепер можна вказати кількох адміністраторів через кому
+# --- Створення папки data та ініціалізація файлів ---
+DATA_DIR = "data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+
+PARTICIPANTS_FILE = os.path.join(DATA_DIR, "participants.json")
+WINNER_STATUS_FILE = os.path.join(DATA_DIR, "winner_status.json")
+
+# Якщо файлів немає — створюємо порожні
+if not os.path.exists(PARTICIPANTS_FILE):
+    with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
+        json.dump([], f, ensure_ascii=False, indent=2)
+
+if not os.path.exists(WINNER_STATUS_FILE):
+    with open(WINNER_STATUS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"used": False}, f, ensure_ascii=False, indent=2)
+
+# 🔹 Адміни
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 # 🔗 Посилання
@@ -22,7 +37,7 @@ DISCORD_LINK = "https://discord.gg/stakegta5"
 YOUTUBE_LINK = "https://www.youtube.com/@stakegta5"
 TELEGRAM_LINK = "https://t.me/stakegta5"
 
-# ✅ Підтримка aiogram 3.7+
+# ✅ Aiogram 3.7+
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
@@ -172,7 +187,7 @@ async def reset_participants(message: types.Message):
     save_winner_status({"used": False})
     await message.answer("♻️ Список учасників очищено. Команду /winner тепер можна використати знову!")
 
-# --- /members ---  ✅ нова команда
+# --- /members --- ✅
 @dp.message(lambda message: message.text == "/members")
 async def show_members_count(message: types.Message):
     participants = load_participants()
