@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+participants.json
+winner_status.json
+.vscode/
+.venv/
