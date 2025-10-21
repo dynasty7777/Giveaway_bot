@@ -13,17 +13,17 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = "@TestGiveAwayStake"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GIST_ID = os.getenv("GIST_ID")
 
-# --- Створення папки data та ініціалізація файлів ---
+# --- Створення папки data ---
 DATA_DIR = "data"
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
 PARTICIPANTS_FILE = os.path.join(DATA_DIR, "participants.json")
 WINNER_STATUS_FILE = os.path.join(DATA_DIR, "winner_status.json")
-GIST_ID_FILE = os.path.join(DATA_DIR, "gist_id.txt")
 
-# Якщо файлів немає — створюємо порожні
+# --- Ініціалізація файлів ---
 if not os.path.exists(PARTICIPANTS_FILE):
     with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
         json.dump([], f, ensure_ascii=False, indent=2)
@@ -32,19 +32,19 @@ if not os.path.exists(WINNER_STATUS_FILE):
     with open(WINNER_STATUS_FILE, "w", encoding="utf-8") as f:
         json.dump({"used": False}, f, ensure_ascii=False, indent=2)
 
-# 🔹 Адміни
+# --- Адміни ---
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
-# 🔗 Посилання
+# --- Посилання ---
 DISCORD_LINK = "https://discord.gg/stakegta5"
 YOUTUBE_LINK = "https://www.youtube.com/@stakegta5"
 TELEGRAM_LINK = "https://t.me/stakegta5"
 
-# ✅ Aiogram 3.7+
+# --- Aiogram 3.7+ ---
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# --- Повний текст розіграшу ---
+# --- Текст розіграшу ---
 GIVEAWAY_TEXT = f"""
 🎉 <b>РОЗІГРАШ ВІД STAKE RP!</b>
 
@@ -76,64 +76,47 @@ GIVEAWAY_TEXT = f"""
 🇺🇦 <b>Stake RP — відкриття вже 31 жовтня о 19:00!</b>
 """
 
-# --- Gist-система збереження ---
+# --- Gist ---
 def get_headers():
     return {"Authorization": f"token {GITHUB_TOKEN}"}
 
-def get_gist_id():
-    if os.path.exists(GIST_ID_FILE):
-        with open(GIST_ID_FILE, "r") as f:
-            return f.read().strip()
-    return None
-
-def save_gist_id(gist_id):
-    with open(GIST_ID_FILE, "w") as f:
-        f.write(gist_id)
-
 def load_from_gist():
-    gist_id = get_gist_id()
-    if not gist_id or not GITHUB_TOKEN:
+    if not GIST_ID or not GITHUB_TOKEN:
         return []
     try:
-        res = requests.get(f"https://api.github.com/gists/{gist_id}", headers=get_headers())
-        data = res.json()
-        content = data["files"]["participants.json"]["content"]
-        return json.loads(content)
+        res = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=get_headers())
+        if res.status_code == 200:
+            data = res.json()
+            content = data["files"]["participants.json"]["content"]
+            return json.loads(content)
+        else:
+            print(f"⚠️ Не вдалося отримати дані з Gist: {res.status_code}")
+            return []
     except Exception as e:
         print(f"⚠️ Не вдалося завантажити дані з Gist: {e}")
         return []
 
 def save_to_gist(participants):
-    if not GITHUB_TOKEN:
-        print("⚠️ GITHUB_TOKEN не знайдено. Пропускаємо збереження.")
+    if not GIST_ID or not GITHUB_TOKEN:
+        print("⚠️ GIST_ID або GITHUB_TOKEN не знайдено. Пропускаємо збереження.")
         return
-
-    gist_id = get_gist_id()
-    payload = {
-        "files": {
-            "participants.json": {
-                "content": json.dumps(participants, indent=2, ensure_ascii=False)
+    try:
+        payload = {
+            "files": {
+                "participants.json": {
+                    "content": json.dumps(participants, indent=2, ensure_ascii=False)
+                }
             }
         }
-    }
-
-    try:
-        if gist_id:
-            res = requests.patch(f"https://api.github.com/gists/{gist_id}", headers=get_headers(), json=payload)
+        res = requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=get_headers(), json=payload)
+        if res.status_code == 200:
+            print("💾 Дані учасників збережено у Gist.")
         else:
-            res = requests.post("https://api.github.com/gists", headers=get_headers(), json={
-                "description": "Stake RP giveaway participants",
-                "public": False,
-                **payload
-            })
-            gist_id = res.json().get("id")
-            if gist_id:
-                save_gist_id(gist_id)
-        print("💾 Дані учасників збережено у Gist.")
+            print(f"⚠️ Помилка при збереженні у Gist: {res.status_code}")
     except Exception as e:
         print(f"❌ Помилка при збереженні у Gist: {e}")
 
-# --- Основні функції ---
+# --- Робота з файлами ---
 def load_participants():
     if os.path.exists(PARTICIPANTS_FILE):
         try:
