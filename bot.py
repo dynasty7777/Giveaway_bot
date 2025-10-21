@@ -2,6 +2,7 @@ import asyncio
 import json
 import random
 import os
+import requests
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.client.default import DefaultBotProperties
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = "@TestGiveAwayStake"
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # --- Створення папки data та ініціалізація файлів ---
 DATA_DIR = "data"
@@ -19,6 +21,7 @@ if not os.path.exists(DATA_DIR):
 
 PARTICIPANTS_FILE = os.path.join(DATA_DIR, "participants.json")
 WINNER_STATUS_FILE = os.path.join(DATA_DIR, "winner_status.json")
+GIST_ID_FILE = os.path.join(DATA_DIR, "gist_id.txt")
 
 # Якщо файлів немає — створюємо порожні
 if not os.path.exists(PARTICIPANTS_FILE):
@@ -73,19 +76,77 @@ GIVEAWAY_TEXT = f"""
 🇺🇦 <b>Stake RP — відкриття вже 31 жовтня о 19:00!</b>
 """
 
-# --- Функції ---
+# --- Gist-система збереження ---
+def get_headers():
+    return {"Authorization": f"token {GITHUB_TOKEN}"}
+
+def get_gist_id():
+    if os.path.exists(GIST_ID_FILE):
+        with open(GIST_ID_FILE, "r") as f:
+            return f.read().strip()
+    return None
+
+def save_gist_id(gist_id):
+    with open(GIST_ID_FILE, "w") as f:
+        f.write(gist_id)
+
+def load_from_gist():
+    gist_id = get_gist_id()
+    if not gist_id or not GITHUB_TOKEN:
+        return []
+    try:
+        res = requests.get(f"https://api.github.com/gists/{gist_id}", headers=get_headers())
+        data = res.json()
+        content = data["files"]["participants.json"]["content"]
+        return json.loads(content)
+    except Exception as e:
+        print(f"⚠️ Не вдалося завантажити дані з Gist: {e}")
+        return []
+
+def save_to_gist(participants):
+    if not GITHUB_TOKEN:
+        print("⚠️ GITHUB_TOKEN не знайдено. Пропускаємо збереження.")
+        return
+
+    gist_id = get_gist_id()
+    payload = {
+        "files": {
+            "participants.json": {
+                "content": json.dumps(participants, indent=2, ensure_ascii=False)
+            }
+        }
+    }
+
+    try:
+        if gist_id:
+            res = requests.patch(f"https://api.github.com/gists/{gist_id}", headers=get_headers(), json=payload)
+        else:
+            res = requests.post("https://api.github.com/gists", headers=get_headers(), json={
+                "description": "Stake RP giveaway participants",
+                "public": False,
+                **payload
+            })
+            gist_id = res.json().get("id")
+            if gist_id:
+                save_gist_id(gist_id)
+        print("💾 Дані учасників збережено у Gist.")
+    except Exception as e:
+        print(f"❌ Помилка при збереженні у Gist: {e}")
+
+# --- Основні функції ---
 def load_participants():
     if os.path.exists(PARTICIPANTS_FILE):
-        with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
-            try:
+        try:
+            with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-            except json.JSONDecodeError:
-                return []
-    return []
+        except json.JSONDecodeError:
+            pass
+    return load_from_gist()
 
 def save_participants(data):
     with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    save_to_gist(data)
 
 def load_winner_status():
     if os.path.exists(WINNER_STATUS_FILE):
@@ -187,7 +248,7 @@ async def reset_participants(message: types.Message):
     save_winner_status({"used": False})
     await message.answer("♻️ Список учасників очищено. Команду /winner тепер можна використати знову!")
 
-# --- /members --- ✅
+# --- /members ---
 @dp.message(lambda message: message.text == "/members")
 async def show_members_count(message: types.Message):
     participants = load_participants()
