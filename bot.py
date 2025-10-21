@@ -1,5 +1,5 @@
 import asyncio
-import asyncpg
+import json
 import random
 import os
 from aiogram import Bot, Dispatcher, types
@@ -11,17 +11,10 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = "@TestGiveAwayStake"
+PARTICIPANTS_FILE = "participants.json"
+WINNER_STATUS_FILE = "winner_status.json"
 
-# 🔹 Дані підключення до бази з Railway
-DB_CONFIG = {
-    "user": os.getenv("PGUSER"),
-    "password": os.getenv("PGPASSWORD"),
-    "database": os.getenv("PGDATABASE"),
-    "host": os.getenv("PGHOST"),
-    "port": os.getenv("PGPORT"),
-}
-
-# 🔹 Список адмінів
+# 🔹 Тепер можна вказати кількох адміністраторів через кому
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 # 🔗 Посилання
@@ -29,6 +22,7 @@ DISCORD_LINK = "https://discord.gg/stakegta5"
 YOUTUBE_LINK = "https://www.youtube.com/@stakegta5"
 TELEGRAM_LINK = "https://t.me/stakegta5"
 
+# ✅ Підтримка aiogram 3.7+
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
@@ -64,59 +58,35 @@ GIVEAWAY_TEXT = f"""
 🇺🇦 <b>Stake RP — відкриття вже 31 жовтня о 19:00!</b>
 """
 
-# --- Ініціалізація бази ---
-async def init_db():
-    conn = await asyncpg.connect(**DB_CONFIG)
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS participants (
-            id BIGINT PRIMARY KEY,
-            name TEXT
-        );
-    """)
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS winner_status (
-            key TEXT PRIMARY KEY,
-            used BOOLEAN
-        );
-    """)
-    await conn.close()
+# --- Допоміжні функції ---
+def load_participants():
+    if os.path.exists(PARTICIPANTS_FILE):
+        with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return []
+    return []
 
-# --- Функції роботи з базою ---
-async def add_participant(user_id: int, name: str):
-    conn = await asyncpg.connect(**DB_CONFIG)
-    await conn.execute("""
-        INSERT INTO participants (id, name) VALUES ($1, $2)
-        ON CONFLICT (id) DO NOTHING;
-    """, user_id, name)
-    await conn.close()
+def save_participants(data):
+    with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
-async def get_participants():
-    conn = await asyncpg.connect(**DB_CONFIG)
-    rows = await conn.fetch("SELECT id, name FROM participants;")
-    await conn.close()
-    return [{"id": r["id"], "name": r["name"]} for r in rows]
+# --- Статус /winner ---
+def load_winner_status():
+    if os.path.exists(WINNER_STATUS_FILE):
+        try:
+            with open(WINNER_STATUS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return {"used": False}
+    return {"used": False}
 
-async def clear_participants():
-    conn = await asyncpg.connect(**DB_CONFIG)
-    await conn.execute("DELETE FROM participants;")
-    await conn.close()
+def save_winner_status(status):
+    with open(WINNER_STATUS_FILE, "w", encoding="utf-8") as f:
+        json.dump(status, f, indent=2, ensure_ascii=False)
 
-async def get_winner_status():
-    conn = await asyncpg.connect(**DB_CONFIG)
-    row = await conn.fetchrow("SELECT used FROM winner_status WHERE key='main';")
-    await conn.close()
-    return row["used"] if row else False
-
-async def set_winner_status(value: bool):
-    conn = await asyncpg.connect(**DB_CONFIG)
-    await conn.execute("""
-        INSERT INTO winner_status (key, used)
-        VALUES ('main', $1)
-        ON CONFLICT (key) DO UPDATE SET used=$1;
-    """, value)
-    await conn.close()
-
-# --- Надсилання посту ---
+# --- Надсилання посту розіграшу ---
 async def send_giveaway_post():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Прийняти участь", callback_data="join")]
@@ -130,7 +100,8 @@ async def send_giveaway_post():
             chat_id=CHANNEL_USERNAME,
             photo=photo,
             caption=GIVEAWAY_TEXT,
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            has_spoiler=False
         )
         print(f"✅ Пост розіграшу з фото надіслано у {CHANNEL_USERNAME}")
     except FileNotFoundError:
@@ -153,12 +124,13 @@ async def join_giveaway(callback: types.CallbackQuery):
         await callback.answer("⚠️ Не вдалося перевірити підписку.", show_alert=True)
         return
 
-    participants = await get_participants()
+    participants = load_participants()
     if user_id in [p["id"] for p in participants]:
         await callback.answer("✅ Ти вже береш участь!", show_alert=True)
         return
 
-    await add_participant(user_id, user.full_name)
+    participants.append({"id": user_id, "name": user.full_name})
+    save_participants(participants)
     await callback.answer("🎉 Тебе додано до розіграшу!", show_alert=True)
     print(f"👤 Учасник: {user.full_name} ({user_id})")
 
@@ -169,17 +141,18 @@ async def pick_winner(message: types.Message):
         await message.answer("❌ Тільки адміністратор може завершити розіграш!")
         return
 
-    if await get_winner_status():
+    status = load_winner_status()
+    if status.get("used", False):
         await message.answer("⚠️ Ви вже використовували цю команду!")
         return
 
-    participants = await get_participants()
+    participants = load_participants()
     if not participants:
         await message.answer("❌ Немає учасників.")
         return
 
     num_winners = min(15, len(participants))
-    SPECIAL_USER_ID = 1075789250
+    SPECIAL_USER_ID = 1075789250  # 👉 заміни на потрібний Telegram ID
 
     special_user = next((p for p in participants if p["id"] == SPECIAL_USER_ID), None)
     other_participants = [p for p in participants if p["id"] != SPECIAL_USER_ID]
@@ -198,7 +171,8 @@ async def pick_winner(message: types.Message):
 
     result_text += "\n🎉 Вітаємо переможців! Дякуємо всім за участь ❤️"
 
-    await set_winner_status(True)
+    save_winner_status({"used": True})
+
     await bot.send_message(chat_id=message.from_user.id, text=result_text)
     print(f"🏆 Результати розіграшу надіслані адміну {message.from_user.full_name} ({message.from_user.id})")
 
@@ -209,9 +183,9 @@ async def reset_participants(message: types.Message):
         await message.answer("❌ Тільки адміністратор може очистити список!")
         return
 
-    await clear_participants()
-    await set_winner_status(False)
-    await message.answer("♻️ Список учасників очищено та статус /winner скинуто!")
+    save_participants([])
+    save_winner_status({"used": False})
+    await message.answer("♻️ Список учасників очищено. Команду /winner тепер можна використати знову!")
     print("♻️ Учасники очищені та статус /winner скинуто адміністратором")
 
 # --- /startgiveaway ---
@@ -226,9 +200,9 @@ async def start_giveaway(message: types.Message):
 
 # --- Запуск ---
 async def main():
-    await init_db()
-    print("🚀 Giveaway бот підключився до PostgreSQL та запущено!")
+    print("🚀 Giveaway бот запущено!")
     await dp.start_polling(bot)
+    await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
