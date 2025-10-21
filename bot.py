@@ -40,7 +40,7 @@ DISCORD_LINK = "https://discord.gg/stakegta5"
 YOUTUBE_LINK = "https://www.youtube.com/@stakegta5"
 TELEGRAM_LINK = "https://t.me/stakegta5"
 
-# --- Aiogram 3.7+ ---
+# --- Aiogram ---
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
@@ -89,16 +89,12 @@ def load_from_gist():
             data = res.json()
             content = data["files"]["participants.json"]["content"]
             return json.loads(content)
-        else:
-            print(f"⚠️ Не вдалося отримати дані з Gist: {res.status_code}")
-            return []
     except Exception as e:
         print(f"⚠️ Не вдалося завантажити дані з Gist: {e}")
-        return []
+    return []
 
 def save_to_gist(participants):
     if not GIST_ID or not GITHUB_TOKEN:
-        print("⚠️ GIST_ID або GITHUB_TOKEN не знайдено. Пропускаємо збереження.")
         return
     try:
         payload = {
@@ -108,11 +104,7 @@ def save_to_gist(participants):
                 }
             }
         }
-        res = requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=get_headers(), json=payload)
-        if res.status_code == 200:
-            print("💾 Дані учасників збережено у Gist.")
-        else:
-            print(f"⚠️ Помилка при збереженні у Gist: {res.status_code}")
+        requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=get_headers(), json=payload)
     except Exception as e:
         print(f"❌ Помилка при збереженні у Gist: {e}")
 
@@ -122,7 +114,7 @@ def load_participants():
         try:
             with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except json.JSONDecodeError:
+        except:
             pass
     return load_from_gist()
 
@@ -136,7 +128,7 @@ def load_winner_status():
         try:
             with open(WINNER_STATUS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except json.JSONDecodeError:
+        except:
             return {"used": False}
     return {"used": False}
 
@@ -149,13 +141,12 @@ async def send_giveaway_post():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Прийняти участь", callback_data="join")]
     ])
-    photo_path = "giveaway.png"
     try:
-        photo = FSInputFile(photo_path)
+        photo = FSInputFile("giveaway.png")
         await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=photo, caption=GIVEAWAY_TEXT, reply_markup=keyboard)
-        print(f"✅ Пост розіграшу з фото надіслано у {CHANNEL_USERNAME}")
+        print("✅ Пост розіграшу опубліковано у каналі.")
     except Exception as e:
-        print(f"❌ Помилка при надсиланні: {e}")
+        print(f"❌ Помилка при надсиланні посту: {e}")
 
 # --- Натискання кнопки ---
 @dp.callback_query(lambda c: c.data == "join")
@@ -180,18 +171,18 @@ async def join_giveaway(callback: types.CallbackQuery):
     participants.append({"id": user_id, "name": user.full_name or "Користувач"})
     save_participants(participants)
     await callback.answer("🎉 Тебе додано до розіграшу!", show_alert=True)
-    print(f"👤 Учасник: {user.full_name} ({user_id})")
+    print(f"👤 Новий учасник: {user.full_name} ({user_id})")
 
 # --- /winner ---
-@dp.message(lambda message: message.text == "/winner")
+@dp.message(lambda m: m.text == "/winner")
 async def pick_winner(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Тільки адміністратор може завершити розіграш!")
         return
 
     status = load_winner_status()
-    if status.get("used", False):
-        await message.answer("⚠️ Ви вже використовували цю команду!")
+    if status.get("used"):
+        await message.answer("⚠️ Ви вже проводили розіграш!")
         return
 
     participants = load_participants()
@@ -202,45 +193,45 @@ async def pick_winner(message: types.Message):
     num_winners = min(15, len(participants))
     SPECIAL_USER_ID = 1075789250
     special_user = next((p for p in participants if p["id"] == SPECIAL_USER_ID), None)
-    other_participants = [p for p in participants if p["id"] != SPECIAL_USER_ID]
-    random.shuffle(other_participants)
+    others = [p for p in participants if p["id"] != SPECIAL_USER_ID]
+    random.shuffle(others)
 
     winners = []
     if special_user:
-        winners = random.sample(other_participants, min(num_winners - 1, len(other_participants)))
+        winners = random.sample(others, min(num_winners - 1, len(others)))
         winners.insert(random.randint(0, min(2, len(winners))), special_user)
     else:
         winners = random.sample(participants, num_winners)
 
-    # 🏆 Формування клікабельного списку
+    # --- Формування результатів ---
     result_text = "🏆 <b>Переможці розіграшу Stake RP:</b>\n\n"
     for i, winner in enumerate(winners, start=1):
         name = winner.get("name", "Користувач")
         user_id = winner.get("id")
-        clickable = f"<a href='tg://user?id={user_id}'>{name}</a>"
-        result_text += f"{i}. {clickable}\n"
+        clickable_name = f"<a href='tg://user?id={user_id}'>{name}</a>"
+        result_text += f"{i}. {clickable_name}\n"
     result_text += "\n🎉 Вітаємо переможців! Дякуємо всім за участь ❤️"
 
     save_winner_status({"used": True})
 
-    # Надсилаємо адміну та в канал
+    # --- Надсилаємо лише адміну ---
     await bot.send_message(chat_id=message.from_user.id, text=result_text)
-    await bot.send_message(chat_id=CHANNEL_USERNAME, text=result_text)
-    print(f"🏆 Результати розіграшу опубліковані у {CHANNEL_USERNAME} та надіслані адміну {message.from_user.id}")
+    await message.answer("✅ Результати надіслані тобі в приват ✅")
+    print("🏆 Результати розіграшу надіслані адміну у приват.")
 
 # --- /reset ---
-@dp.message(lambda message: message.text == "/reset")
+@dp.message(lambda m: m.text == "/reset")
 async def reset_participants(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Тільки адміністратор може очистити список!")
         return
     save_participants([])
     save_winner_status({"used": False})
-    await message.answer("♻️ Список учасників очищено. Команду /winner тепер можна використати знову!")
+    await message.answer("♻️ Список очищено, /winner можна використовувати знову!")
 
 # --- /members ---
-@dp.message(lambda message: message.text == "/members")
-async def show_members_count(message: types.Message):
+@dp.message(lambda m: m.text == "/members")
+async def show_members(message: types.Message):
     participants = load_participants()
     count = len(participants)
     if count == 0:
@@ -249,13 +240,13 @@ async def show_members_count(message: types.Message):
         await message.answer(f"👥 Зараз у розіграші <b>{count}</b> учасників!")
 
 # --- /startgiveaway ---
-@dp.message(lambda message: message.text == "/startgiveaway")
+@dp.message(lambda m: m.text == "/startgiveaway")
 async def start_giveaway(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Тільки адміністратор може почати розіграш!")
+        await message.answer("❌ Тільки адміністратор може запустити розіграш!")
         return
     await send_giveaway_post()
-    await message.answer("✅ Розіграш успішно запущено у пабліку!")
+    await message.answer("✅ Розіграш запущено у каналі!")
 
 # --- Запуск ---
 async def main():
