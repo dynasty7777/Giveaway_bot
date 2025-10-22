@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # --- Завантаження .env ---
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_USERNAME = "@TestGiveAwayStake"
+CHANNEL_USERNAME = "@stakegta5"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GIST_ID = os.getenv("GIST_ID")
 
