@@ -23,15 +23,6 @@ if not os.path.exists(DATA_DIR):
 PARTICIPANTS_FILE = os.path.join(DATA_DIR, "participants.json")
 WINNER_STATUS_FILE = os.path.join(DATA_DIR, "winner_status.json")
 
-# --- Ініціалізація файлів ---
-if not os.path.exists(PARTICIPANTS_FILE):
-    with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
-        json.dump([], f, ensure_ascii=False, indent=2)
-
-if not os.path.exists(WINNER_STATUS_FILE):
-    with open(WINNER_STATUS_FILE, "w", encoding="utf-8") as f:
-        json.dump({"used": False}, f, ensure_ascii=False, indent=2)
-
 # --- Адміни ---
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
@@ -107,6 +98,16 @@ def save_to_gist(participants):
         requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=get_headers(), json=payload)
     except Exception as e:
         print(f"❌ Помилка при збереженні у Gist: {e}")
+
+# --- Якщо локального файлу немає — завантажуємо з Gist ---
+if not os.path.exists(PARTICIPANTS_FILE):
+    gist_data = load_from_gist()
+    with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(gist_data or [], f, ensure_ascii=False, indent=2)
+
+if not os.path.exists(WINNER_STATUS_FILE):
+    with open(WINNER_STATUS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"used": False}, f, ensure_ascii=False, indent=2)
 
 # --- Робота з файлами ---
 def load_participants():
