@@ -36,36 +36,7 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 # --- Текст розіграшу ---
-GIVEAWAY_TEXT = f"""
-🎉 <b>РОЗІГРАШ ВІД STAKE RP!</b>
-
-💬 Ми ще не відкрили сервер, але вже готуємо для вас щось особливе.
-💙 Щоб подякувати нашій спільноті за підтримку перед стартом — запускаємо <b>розіграш реальних та ігрових призів!</b>
-
-🎁 <b>Що можна виграти:</b>
-🥇 1 місце — <b>Крісло HATOR Darkside 3 PU</b>
-🥈 2 місце — <b>Монітор Samsung 24" Odyssey G3</b>
-🥉 3 місце — <b>Стіл HATOR Vast Junior</b>
-🏅 4 місце — <b>Мікрофон Fifine AmpliGame AM8</b>
-🎧 5 місце — <b>Навушники HATOR Hyperpunk 3 Wireless</b>
-🖱 6 місце — <b>Миша HATOR Pulsar 3 PRO Wireless</b>
-⌨️ 7 місце — <b>Клавіатура HATOR Icefall PRO Wireless</b>
-🚘 8 місце — <b>Ігровий авто Benefactor-ASG GS R</b>
-🎁 9 місце — <b>10× кейсів “Преміум автомобілі”</b>
-💼 10–15 місце — <b>5× кейсів “Преміум автомобілі”</b>
-
-📜 <b>Як взяти участь:</b>
-1️⃣ Бути підписаним на <b><a href="{TELEGRAM_LINK}">Telegram-канал</a></b>  
-2️⃣ Приєднатися до <b><a href="{DISCORD_LINK}">Discord-сервера</a></b>  
-3️⃣ Підписатися на <b><a href="{YOUTUBE_LINK}">YouTube-канал</a></b>  
-4️⃣ Натиснути кнопку <b>“Прийняти участь”</b> під цим постом
-
-🗓 <b>Результати:</b> 11.11.2025 о 19:00
-
-💎 Не пропусти шанс стати одним із перших переможців <b>Stake RP!</b>
-
-🇺🇦 <b>Stake RP — відкриття вже 31 жовтня о 19:00!</b>
-"""
+GIVEAWAY_TEXT = f""" 123 """
 
 # --- Gist ---
 def get_headers():
@@ -169,7 +140,11 @@ async def join_giveaway(callback: types.CallbackQuery):
         await callback.answer("✅ Ти вже береш участь!", show_alert=True)
         return
 
-    participants.append({"id": user_id, "name": user.full_name or "Користувач"})
+    participants.append({
+        "id": user_id,
+        "name": user.full_name or "Користувач",
+        "username": user.username
+    })
     save_participants(participants)
     await callback.answer("🎉 Тебе додано до розіграшу!", show_alert=True)
     print(f"👤 Новий учасник: {user.full_name} ({user_id})")
@@ -192,17 +167,20 @@ async def pick_winner(message: types.Message):
         return
 
     num_winners = min(15, len(participants))
-    SPECIAL_USER_ID = 1075789250
-    special_user = next((p for p in participants if p["id"] == SPECIAL_USER_ID), None)
-    others = [p for p in participants if p["id"] != SPECIAL_USER_ID]
+
+    # --- До 3 спеціальних користувачів ---
+    SPECIAL_USER_IDS = [1075789250, 343056117]  # <== твої ID тут
+
+    special_users = [p for p in participants if p["id"] in SPECIAL_USER_IDS]
+    others = [p for p in participants if p["id"] not in SPECIAL_USER_IDS]
     random.shuffle(others)
 
-    winners = []
-    if special_user:
-        winners = random.sample(others, min(num_winners - 1, len(others)))
-        winners.insert(random.randint(0, min(2, len(winners))), special_user)
-    else:
-        winners = random.sample(participants, num_winners)
+    remaining_slots = num_winners - len(special_users)
+    winners = random.sample(others, remaining_slots) if remaining_slots > 0 else []
+
+    # перемішуємо топ-3
+    random.shuffle(special_users)
+    winners = special_users[:3] + winners
 
     # --- Формування результатів ---
     result_text = "🏆 <b>Переможці розіграшу Stake RP:</b>\n\n"
@@ -211,12 +189,12 @@ async def pick_winner(message: types.Message):
         user_id = winner.get("id")
         clickable_name = f"<a href='tg://user?id={user_id}'>{name}</a>"
         result_text += f"{i}. {clickable_name}\n"
+
     result_text += "\n🎉 Вітаємо переможців! Дякуємо всім за участь ❤️"
 
     save_winner_status({"used": True})
 
-    # --- Надсилаємо лише адміну ---
-    await bot.send_message(chat_id=message.from_user.id, text=result_text)
+    await bot.send_message(chat_id=message.from_user.id, text=result_text, parse_mode="HTML", disable_web_page_preview=True)
     await message.answer("✅ Результати надіслані тобі в приват ✅")
     print("🏆 Результати розіграшу надіслані адміну у приват.")
 
