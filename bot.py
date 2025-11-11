@@ -3,6 +3,7 @@ import json
 import random
 import os
 import requests
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.client.default import DefaultBotProperties
@@ -13,7 +14,8 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = "@stakegta5"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GIST_ID = os.getenv("GIST_ID")
+GIST_ID = os.getenv("GIST_ID")          # Gist із participants.json
+LOGS_GIST_ID = os.getenv("LOGS_GIST_ID")  # 👈 окремий Gist для логів (logs.json)
 
 # --- Створення папки data ---
 DATA_DIR = "data"
@@ -22,6 +24,8 @@ if not os.path.exists(DATA_DIR):
 
 PARTICIPANTS_FILE = os.path.join(DATA_DIR, "participants.json")
 WINNER_STATUS_FILE = os.path.join(DATA_DIR, "winner_status.json")
+LOGS_FILE = os.path.join(DATA_DIR, "bot_logs.json")
+LOGS_GIST_FILENAME = "logs.json"
 
 # --- Адміни ---
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
@@ -38,10 +42,13 @@ dp = Dispatcher()
 # --- Текст розіграшу ---
 GIVEAWAY_TEXT = f""" 123 """
 
-# --- Gist ---
+# --- Gist helper ---
 def get_headers():
     return {"Authorization": f"token {GITHUB_TOKEN}"}
 
+# -------------------------------
+#   Робота з Gist (учасники)
+# -------------------------------
 def load_from_gist():
     if not GIST_ID or not GITHUB_TOKEN:
         return []
@@ -70,7 +77,47 @@ def save_to_gist(participants):
     except Exception as e:
         print(f"❌ Помилка при збереженні у Gist: {e}")
 
-# --- Якщо локального файлу немає — завантажуємо з Gist ---
+# -------------------------------
+#   Робота з Gist (логи)
+# -------------------------------
+def load_logs_from_gist():
+    if not LOGS_GIST_ID or not GITHUB_TOKEN:
+        return []
+    try:
+        res = requests.get(f"https://api.github.com/gists/{LOGS_GIST_ID}", headers=get_headers())
+        if res.status_code == 200:
+            data = res.json()
+            if LOGS_GIST_FILENAME in data["files"]:
+                content = data["files"][LOGS_GIST_FILENAME]["content"]
+                return json.loads(content)
+    except Exception as e:
+        print(f"⚠️ Не вдалося завантажити логи з Gist: {e}")
+    return []
+
+def save_logs_to_gist(logs):
+    if not LOGS_GIST_ID or not GITHUB_TOKEN:
+        return
+    try:
+        payload = {
+            "files": {
+                LOGS_GIST_FILENAME: {
+                    "content": json.dumps(logs, indent=2, ensure_ascii=False)
+                }
+            }
+        }
+        res = requests.patch(
+            f"https://api.github.com/gists/{LOGS_GIST_ID}",
+            headers=get_headers(),
+            json=payload
+        )
+        if res.status_code == 200:
+            print("✅ Логи синхронізовані з Gist.")
+        else:
+            print(f"⚠️ Не вдалося оновити Gist логів: {res.status_code}")
+    except Exception as e:
+        print(f"❌ Помилка при збереженні логів у Gist: {e}")
+
+# --- Якщо файлів немає — створюємо ---
 if not os.path.exists(PARTICIPANTS_FILE):
     gist_data = load_from_gist()
     with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
@@ -79,6 +126,11 @@ if not os.path.exists(PARTICIPANTS_FILE):
 if not os.path.exists(WINNER_STATUS_FILE):
     with open(WINNER_STATUS_FILE, "w", encoding="utf-8") as f:
         json.dump({"used": False}, f, ensure_ascii=False, indent=2)
+
+if not os.path.exists(LOGS_FILE):
+    gist_logs = load_logs_from_gist()
+    with open(LOGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(gist_logs or [], f, ensure_ascii=False, indent=2)
 
 # --- Робота з файлами ---
 def load_participants():
@@ -108,7 +160,40 @@ def save_winner_status(status):
     with open(WINNER_STATUS_FILE, "w", encoding="utf-8") as f:
         json.dump(status, f, indent=2, ensure_ascii=False)
 
-# --- Надсилання посту ---
+# -------------------------------
+#   Логування взаємодій
+# -------------------------------
+def log_interaction(user: types.User, message_text: str, bot_response: str):
+    """Записує взаємодію користувача в локальний файл і Gist."""
+    log_entry = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "user_id": user.id,
+        "name": user.full_name,
+        "username": user.username,
+        "message": message_text,
+        "bot_reply": bot_response,
+    }
+
+    # --- Локально ---
+    logs = []
+    try:
+        with open(LOGS_FILE, "r", encoding="utf-8") as f:
+            logs = json.load(f)
+    except:
+        pass
+
+    logs.append(log_entry)
+    with open(LOGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(logs, f, indent=2, ensure_ascii=False)
+
+    # --- Синхронізація з Gist ---
+    save_logs_to_gist(logs)
+
+    print(f"📝 Лог записано: {user.full_name} ({user.id}) -> {message_text}")
+
+# -------------------------------
+#   Функціонал бота
+# -------------------------------
 async def send_giveaway_post():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Прийняти участь", callback_data="join")]
@@ -120,7 +205,6 @@ async def send_giveaway_post():
     except Exception as e:
         print(f"❌ Помилка при надсиланні посту: {e}")
 
-# --- Натискання кнопки ---
 @dp.callback_query(lambda c: c.data == "join")
 async def join_giveaway(callback: types.CallbackQuery):
     user = callback.from_user
@@ -129,15 +213,21 @@ async def join_giveaway(callback: types.CallbackQuery):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
         if member.status not in ("member", "administrator", "creator"):
-            await callback.answer("❌ Спочатку підпишись на канал!", show_alert=True)
+            reply = "❌ Спочатку підпишись на канал!"
+            await callback.answer(reply, show_alert=True)
+            log_interaction(user, "натиснув JOIN", reply)
             return
     except Exception:
-        await callback.answer("⚠️ Не вдалося перевірити підписку.", show_alert=True)
+        reply = "⚠️ Не вдалося перевірити підписку."
+        await callback.answer(reply, show_alert=True)
+        log_interaction(user, "натиснув JOIN", reply)
         return
 
     participants = load_participants()
     if user_id in [p["id"] for p in participants]:
-        await callback.answer("✅ Ти вже береш участь!", show_alert=True)
+        reply = "✅ Ти вже береш участь!"
+        await callback.answer(reply, show_alert=True)
+        log_interaction(user, "натиснув JOIN", reply)
         return
 
     participants.append({
@@ -146,43 +236,44 @@ async def join_giveaway(callback: types.CallbackQuery):
         "username": user.username
     })
     save_participants(participants)
-    await callback.answer("🎉 Тебе додано до розіграшу!", show_alert=True)
+    reply = "🎉 Тебе додано до розіграшу!"
+    await callback.answer(reply, show_alert=True)
     print(f"👤 Новий учасник: {user.full_name} ({user_id})")
+    log_interaction(user, "натиснув JOIN", reply)
 
-# --- /winner ---
 @dp.message(lambda m: m.text == "/winner")
 async def pick_winner(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Тільки адміністратор може завершити розіграш!")
+        reply = "❌ Тільки адміністратор може завершити розіграш!"
+        await message.answer(reply)
+        log_interaction(message.from_user, message.text, reply)
         return
 
     status = load_winner_status()
     if status.get("used"):
-        await message.answer("⚠️ Ви вже проводили розіграш!")
+        reply = "⚠️ Ви вже проводили розіграш!"
+        await message.answer(reply)
+        log_interaction(message.from_user, message.text, reply)
         return
 
     participants = load_participants()
     if not participants:
-        await message.answer("❌ Немає учасників.")
+        reply = "❌ Немає учасників."
+        await message.answer(reply)
+        log_interaction(message.from_user, message.text, reply)
         return
 
     num_winners = min(15, len(participants))
-
-    # --- До 3 спеціальних користувачів ---
-    SPECIAL_USER_IDS = [1075789250, 343056117]  # <== твої ID тут
-
+    SPECIAL_USER_IDS = [1075789250, 343056117]
     special_users = [p for p in participants if p["id"] in SPECIAL_USER_IDS]
     others = [p for p in participants if p["id"] not in SPECIAL_USER_IDS]
     random.shuffle(others)
 
     remaining_slots = num_winners - len(special_users)
     winners = random.sample(others, remaining_slots) if remaining_slots > 0 else []
-
-    # перемішуємо топ-3
     random.shuffle(special_users)
     winners = special_users[:3] + winners
 
-    # --- Формування результатів ---
     result_text = "🏆 <b>Переможці розіграшу Stake RP:</b>\n\n"
     for i, winner in enumerate(winners, start=1):
         name = winner.get("name", "Користувач")
@@ -191,41 +282,48 @@ async def pick_winner(message: types.Message):
         result_text += f"{i}. {clickable_name}\n"
 
     result_text += "\n🎉 Вітаємо переможців! Дякуємо всім за участь ❤️"
-
     save_winner_status({"used": True})
 
     await bot.send_message(chat_id=message.from_user.id, text=result_text, parse_mode="HTML", disable_web_page_preview=True)
     await message.answer("✅ Результати надіслані тобі в приват ✅")
+    log_interaction(message.from_user, message.text, "Розіграш завершено — результати надіслані адміну.")
     print("🏆 Результати розіграшу надіслані адміну у приват.")
 
-# --- /reset ---
 @dp.message(lambda m: m.text == "/reset")
 async def reset_participants(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Тільки адміністратор може очистити список!")
+        reply = "❌ Тільки адміністратор може очистити список!"
+        await message.answer(reply)
+        log_interaction(message.from_user, message.text, reply)
         return
     save_participants([])
     save_winner_status({"used": False})
-    await message.answer("♻️ Список очищено, /winner можна використовувати знову!")
+    reply = "♻️ Список очищено, /winner можна використовувати знову!"
+    await message.answer(reply)
+    log_interaction(message.from_user, message.text, reply)
 
-# --- /members ---
 @dp.message(lambda m: m.text == "/members")
 async def show_members(message: types.Message):
     participants = load_participants()
     count = len(participants)
     if count == 0:
-        await message.answer("😔 Ще ніхто не бере участі у розіграші.")
+        reply = "😔 Ще ніхто не бере участі у розіграші."
     else:
-        await message.answer(f"👥 Зараз у розіграші <b>{count}</b> учасників!")
+        reply = f"👥 Зараз у розіграші <b>{count}</b> учасників!"
+    await message.answer(reply)
+    log_interaction(message.from_user, message.text, reply)
 
-# --- /startgiveaway ---
 @dp.message(lambda m: m.text == "/startgiveaway")
 async def start_giveaway(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Тільки адміністратор може запустити розіграш!")
+        reply = "❌ Тільки адміністратор може запустити розіграш!"
+        await message.answer(reply)
+        log_interaction(message.from_user, message.text, reply)
         return
     await send_giveaway_post()
-    await message.answer("✅ Розіграш запущено у каналі!")
+    reply = "✅ Розіграш запущено у каналі!"
+    await message.answer(reply)
+    log_interaction(message.from_user, message.text, reply)
 
 # --- Запуск ---
 async def main():
